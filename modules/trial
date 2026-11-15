@@ -1,0 +1,239 @@
+"""
+Grid search over TRIM_FRAMES for dead-ball detection, ranked best -> worst,
+exported to Excel. Uses the real repo structure (games.py resolves asset paths
+for you -- no need to hardcode where the tactical/broadcast files are).
+
+USAGE
+-----
+    python search_trim_frames.py
+    (or run cell by cell in Jupyter)
+
+BEFORE RUNNING
+--------------
+1. Download the challenge repo as a ZIP (GitHub -> Code -> Download ZIP) and
+   extract it somewhere, e.g. C:\\Users\\Peter\\Documents\\barca-hackathon
+2. Put your tactical/ and broadcast/ folders inside <that folder>\\data\\
+3. Create dead_ball.py in <that folder>'s root (next to games.py), with your
+   friend's detect_dead_ball code in it -- this is the one file NOT in the repo.
+4. Set REPO_ROOT below to <that folder>.
+5. Run this file. If anything required is missing, you'll get ONE clear list of
+   every missing item before any import is attempted.
+"""
+
+import os
+import sys
+import time
+
+# --------------------------------------------------------------------------- #
+#  CONFIG -- edit this
+# --------------------------------------------------------------------------- #
+
+REPO_ROOT = r"C:\Users\Peter\Documents\barca-hackathon"   # <-- EDIT THIS
+
+N_FRAMES = 199319
+TRIM_MIN = 0
+TRIM_MAX = 200     # inclusive
+TRIM_STEP = 1
+N_WORKERS = 8
+
+# --------------------------------------------------------------------------- #
+#  Setup check -- verifies everything needed exists, reports it all at once
+# --------------------------------------------------------------------------- #
+
+REQUIRED = [
+    ("games.py", "games.py"),
+    ("dead_ball.py", "dead_ball.py"),
+    ("starter/load_smart_tagging.py", os.path.join("starter", "load_smart_tagging.py")),
+    ("evaluation/possession_metrics.py", os.path.join("evaluation", "possession_metrics.py")),
+    ("evaluation/gt/BAR-ATH_possession_gt_public.csv",
+     os.path.join("evaluation", "gt", "BAR-ATH_possession_gt_public.csv")),
+    ("data/tactical/ (folder)", os.path.join("data", "tactical")),
+]
+
+
+def check_setup():
+    if not os.path.isdir(REPO_ROOT):
+        raise SystemExit(
+            "REPO_ROOT does not exist: {}\n"
+            "Edit the REPO_ROOT line at the top of this script.".format(REPO_ROOT)
+        )
+
+    missing = []
+    for label, relpath in REQUIRED:
+        full = os.path.join(REPO_ROOT, relpath)
+        if not os.path.exists(full):
+            missing.append((label, full))
+
+    if missing:
+        lines = ["Missing {} of {} required items under REPO_ROOT ({}):".format(
+            len(missing), len(REQUIRED), REPO_ROOT)]
+        for label, full in missing:
+            lines.append("  [MISSING] {}  (expected at: {})".format(label, full))
+        lines.append("")
+        lines.append("Found OK:")
+        for label, relpath in REQUIRED:
+            full = os.path.join(REPO_ROOT, relpath)
+            if os.path.exists(full):
+                lines.append("  [ok] {}".format(label))
+        raise SystemExit("\n".join(lines))
+
+    print("All required files found under {}".format(REPO_ROOT))
+
+
+check_setup()
+
+# --------------------------------------------------------------------------- #
+#  Imports -- repo's own modules, now that we know they exist
+# --------------------------------------------------------------------------- #
+
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "evaluation"))
+
+import numpy as np
+import pandas as pd
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+try:
+    from dead_ball import detect_dead_ball
+except Exception as e:
+    raise SystemExit("Found dead_ball.py but failed to import it: {}".format(e))
+
+try:
+    from starter.load_smart_tagging import load as load_tagging
+except Exception as e:
+    raise SystemExit(
+        "Found starter/load_smart_tagging.py but failed to import it: {}\n"
+        "This file imports games.py from the repo root -- make sure games.py is "
+        "directly in REPO_ROOT, and that your data/tactical/ folder has the "
+        "Smart Tagging XML with the exact filename games.py expects."
+        .format(e)
+    )
+
+try:
+    import possession_metrics as pm
+except Exception as e:
+    raise SystemExit("Found evaluation/possession_metrics.py but failed to import it: {}".format(e))
+
+GT_PATH = os.path.join(REPO_ROOT, "evaluation", "gt", "BAR-ATH_possession_gt_public.csv")
+
+_GT_CODES = None
+_EVENTS = None
+
+
+def _load_gt():
+    global _GT_CODES
+    if _GT_CODES is None:
+        table = pm.read_label_csv(GT_PATH)
+        _GT_CODES = pm.label_codes(table)
+    return _GT_CODES
+
+
+def score(is_dead, n_frames):
+    """Score a dead-ball mask against the public ground truth.
+
+    Alive frames are predicted as X (abstain) -- isolates what the dead-ball
+    detector alone contributes. Returns (spell_f1_mean, macro_f1).
+    """
+    gt_codes = _load_gt()
+    if len(gt_codes) != n_frames:
+        raise ValueError(
+            "ground truth has {} rows, expected {}".format(len(gt_codes), n_frames))
+    pred_codes = np.where(is_dead, pm.D, pm.X).astype(np.int8)
+    result = pm.evaluate(gt_codes, pred_codes, bootstrap_n=0)
+    return result["spell_f1_mean"], result["macro_f1"]
+
+
+def _init_worker():
+    global _EVENTS
+    events = load_tagging()
+    _EVENTS = [e for e in events if e["code"] == "SET PIECES"]
+    _load_gt()
+
+
+def _evaluate_one(trim_frames):
+    global _EVENTS
+    if _EVENTS is None:
+        _init_worker()
+
+    t0 = time.perf_counter()
+    is_dead = detect_dead_ball(_EVENTS, n_frames=N_FRAMES, trim_frames=trim_frames)
+    try:
+        spell_f1, macro_f1 = score(is_dead, N_FRAMES)
+        error = None
+    except Exception as exc:
+        spell_f1, macro_f1, error = float("nan"), float("nan"), str(exc)
+    elapsed = time.perf_counter() - t0
+
+    return {
+        "trim_frames": trim_frames,
+        "trim_seconds": round(trim_frames / 25.0, 2),
+        "spellF1": spell_f1,
+        "macroF1": macro_f1,
+        "dead_frame_count": int(is_dead.sum()),
+        "dead_frame_pct": round(100 * is_dead.sum() / N_FRAMES, 2),
+        "seconds_to_score": round(elapsed, 3),
+        "error": error,
+    }
+
+
+def run_sweep():
+    trims = list(range(TRIM_MIN, TRIM_MAX + 1, TRIM_STEP))
+    results = []
+
+    print(f"Searching trim_frames in [{TRIM_MIN}, {TRIM_MAX}] step {TRIM_STEP} "
+          f"({len(trims)} values) across {N_WORKERS} workers...")
+
+    with ProcessPoolExecutor(max_workers=N_WORKERS, initializer=_init_worker) as ex:
+        futures = {ex.submit(_evaluate_one, t): t for t in trims}
+        done = 0
+        for fut in as_completed(futures):
+            row = fut.result()
+            results.append(row)
+            done += 1
+            if done % 20 == 0 or done == len(trims):
+                print(f"  {done}/{len(trims)} done")
+
+    df = pd.DataFrame(results)
+    df = df.sort_values(["spellF1", "macroF1"], ascending=[False, False]).reset_index(drop=True)
+    df.insert(0, "rank", np.arange(1, len(df) + 1))
+    return df
+
+
+def export_excel(df, path="trim_frames_search_results.xlsx"):
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Results", index=False)
+
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+
+    wb = load_workbook(path)
+    ws = wb["Results"]
+
+    header_font = Font(name="Arial", bold=True)
+    best_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    normal_font = Font(name="Arial")
+
+    for cell in ws[1]:
+        cell.font = header_font
+    ws.freeze_panes = "A2"
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            cell.font = normal_font
+        if row[0].value == 1:
+            for cell in row:
+                cell.fill = best_fill
+
+    for col_cells in ws.columns:
+        width = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells) + 2
+        ws.column_dimensions[col_cells[0].column_letter].width = width
+
+    wb.save(path)
+    print(f"Saved: {path}")
+
+
+if __name__ == "__main__":
+    df = run_sweep()
+    print("\nTop 10 by spellF1:")
+    print(df.head(10).to_string(index=False))
+    export_excel(df)
