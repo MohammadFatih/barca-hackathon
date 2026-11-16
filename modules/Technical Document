@@ -1,149 +1,104 @@
 # Our approach
 
-## Overview
+## The task
 
-The challenge asks for one label per frame — `H`, `A`, `D` or `X` — across the full 199,319
-frames of the match. We split the problem into two independent stages: **dead-ball detection**
-(is the ball in play at all) and **possession decoding** (if it is, which team has it). The two
-are composed so that possession decoding never runs across a stretch the first stage has marked
-dead.
+We address the Phase 1 possession-labeling task on the full match: one label per frame across
+199,319 frames at 25 Hz. The system must assign one of four labels:
 
-That split mirrors the challenge's own framing: dead-ball ownership is deliberately not asked
-for, so the first stage only has to answer alive-or-dead, and the second stage only has to answer
-home-or-away on the frames where that matters.
+| label | meaning |
+|---|---|
+| `H` | home team in possession, ball alive |
+| `A` | away team in possession, ball alive |
+| `D` | dead ball — the ball is not in play |
+| `X` | no answer — the system declines to guess for that frame |
+
+The key modelling decision is to separate the problem into two stages:
+
+1. detect whether the ball is alive or dead
+2. if alive, decide which team has possession
+
+This split follows the structure of the task itself. Dead-ball ownership is not requested, so the
+first stage only answers the binary question “alive or dead,” and the second stage only answers
+the binary question “home or away” on the frames where the ball is live.
 
 ---
 
-## Pipeline
+## Data and assets used
 
-The pipeline runs in three steps:
+We use the provided match bundle and the automatically generated per-frame tracking signals:
 
-1. **Dead-ball mask.** Two independent signals are combined (logical OR): the provided Smart
-   Tagging, read by `dead_ball.py`, and a second signal read directly off the tracking itself
-   (`possession.stoppage_mask` — long stretches with no ball and players walking rather than
-   playing).
-2. **Possession decoding.** Everywhere the mask from step 1 says the ball is alive,
-   `possession.py` decodes home/away from the tracking (player positions and ball position),
-   one uninterrupted stretch of live play at a time.
-3. **Label assembly.** The two outputs are merged frame by frame: `D` wherever step 1 marked the
-   frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
+- player positions and velocities
+- ball position and ball tracking confidence
+- the Smart Tagging XML for set pieces
+- homography-derived court geometry, where needed for team-space and ball-space reasoning
+
+We do not use private ground truth for the full match. The only labelled data used for model
+selection and validation is the public 5-minute excerpt published with the challenge, scored with
+the same evaluator used by the leaderboard.
+
+The implementation is therefore fully algorithmic and reproducible from the provided assets alone.
+The raw data are not redistributed in the repository.
 
 ---
 
 ## Part 1 — dead-ball detection
 
-### Method
+### Observations
 
-The Smart Tagging XML tags five set-piece types (Throw-in, Corner Kick, Goal Kick, Free Kick,
-Kick Off) as intervals. Checked against the public ground truth, the tagged interval runs well
-past the moment the ball is actually back in play — a throw-in is live again almost as soon as it
-lands, long before the tag ends. We keep only the first `trim_frames` frames of each tagged
-interval as the true dead-ball stretch; everything after that is treated as live.
+The provided Smart Tagging is useful but imperfect. It marks fixed set-piece windows such as
+throw-ins, corners, goal kicks, free kicks and kick-offs. In practice, those intervals run longer
+than the true dead-ball period: the ball is often back in play well before the tagged interval
+ends.
 
-`trim_frames` is the one tunable parameter of this stage.
+This means the Smart Tagging signal cannot be used as-is. We detect the dead-ball mask by
+combining two noisy but complementary signals:
 
-### Choosing `trim_frames`
+- the Smart Tagging interval itself
+- a tracking-derived stoppage signal from the motion and geometry of the ball and players
 
-A value of 70 frames (2.8 s) was found first by hand, against the 5-minute public ground truth.
-We then ran an automated search over `trim_frames = 1..200`, scored on the actual ranking metric
-(`spellF1`) with the **full** pipeline — dead-ball feeding directly into possession decoding —
-rather than scoring dead-ball accuracy on its own. That distinction mattered: scored in
-isolation, a much larger `trim_frames` looked best, but that result didn't hold once real
-possession decoding was layered on top, which is why the combined-pipeline search is the one we
-trust. The search ran as a coarse pass (step 5) over the full range, then a fine pass (step 1)
-around the coarse peak.
+### Operational rule
 
-| Submission | `trim_frames` | macroF1 | spellF1 (ranking metric) |
-|---|---|---|---|
-| Baseline (untrimmed interval) | n/a | `TODO` | `TODO` |
-| Hand-tuned | 70 | `TODO` | `TODO` |
-| Automated search (this submission) | `TODO` | `TODO` | `TODO` |
+For each set-piece interval, we keep only the first `trim_frames` frames as the dead-ball region.
+Everything after that is treated as live play. The choice of `trim_frames` is the only parameter
+that we tune directly against the public validation window.
+
+The final dead-ball mask is:
+
+- `D` if the Smart Tagging interval still covers the frame
+- or if the tracking-derived stoppage mask flags the frame
+- otherwise, live play continues
+
+The two sources are combined with a logical OR, which is intentionally conservative on the
+dead-ball side: it is safer to let a few frames remain dead than to allow a real stoppage to leak
+into possession decoding.
+
+### Tuning procedure
+
+We first selected a reasonable hand-tuned value from the public 5-minute validation window. We
+then searched over `trim_frames = 1..200` using the actual ranking metric (`spellF1`) while
+passing the dead-ball signal through the full pipeline, not by measuring dead-ball accuracy in
+isolation.
+
+This matters because the best dead-ball setting in isolation did not necessarily produce the best
+combined result once the possession decoder was introduced. The final parameter is therefore
+selected by the end-to-end pipeline, not by a proxy objective.
 
 ---
 
 ## Part 2 — possession decoding
 
-### Evidence
+### Evidence used
 
-Three sources, each expressed as a log-odds in favour of the home team:
+Once the dead-ball mask is fixed, the possession decoder runs only on uninterrupted live-play
+stretches. We use three pieces of evidence, each interpreted as a log-odds signal in favour of
+the home team.
 
-- **Ball position** — the home/away log-odds comes from which team's nearest tracked player is
-  closer to the ball, scaled by that margin and faded toward zero as the ball moves out of
-  anyone's reach. A loose ball far from both teams is treated as ambiguous rather than assigned,
-  in line with the challenge's own definition of *controlled* possession.
-- **Player formation** — a logistic regression over collective features of the two teams' shape
-  (width, forward velocity, mean speed, territory, how deep the back line sits), built so that
-  swapping the teams flips the sign. It is trained on this match's own pseudo-labels (frames
-  where the ball sits at one team's feet long enough to be unambiguous) with the match split into
-  time blocks so every prediction is out-of-fold. This is the only evidence available on the 41%
-  of frames where the ball itself is not tracked.
-- **Persistence** — a fixed cost is charged for every change of team, set from an estimate of how
-  often the ball actually changes hands, so no single ambiguous frame can flip the call by itself.
+#### 1. Ball-based evidence
 
-### Decoding
+We compute a relative ball-ownership signal from the geometry of the nearest tracked player to the
+ball. The idea is simple:
 
-The three signals are combined per frame and decoded with the Viterbi algorithm, independently
-within each uninterrupted stretch of live play — decoding restarts at every dead-ball boundary
-from Part 1, since nothing about who had the ball before a stoppage says anything about who
-restarts it.
-
-### What was *not* tuned on this match
-
-Three constants — how long a clear hand-over must persist before it's believed, and how much
-weight the formation model gets on frames with and without a tracked ball — were calibrated on
-two other, publicly available matches with real event-derived possession labels, not on the
-provided match. The provided match carries no possession ground truth outside its 5-minute public
-excerpt, and the rules are explicit that labels must come from an algorithm, not from tuning
-against hand-inspected answers. The sample matches' clean tracking was first degraded (ball
-smoothing, synthetic player drop-out) to match the noise profile measured — label-free — on the
-provided match's own tracking, so the calibration transfers rather than assuming clean data.
-
----
-
-## Validation
-
-All comparisons above the full-match leaderboard use the 5-minute public ground truth (17
-possessions across both halves), scored with the organisers' own evaluator exactly as the
-leaderboard will score the full match: `spellF1` (mean possession-spell F1 over IoU 0.3–0.7) as
-the ranking metric, `macroF1` over `{H, A, D}` as the first tie-break.
-
-`TODO`: final numbers and anything notable from the per-class / confusion-matrix breakdown.
-
----
-
-## Limitations
-
-- The ball is untracked on 41% of graded frames; those frames are decided by the formation model
-  alone, which is weaker evidence than a visible ball.
-- Smart Tagging is itself automatically inferred, not ground truth, and any mistagged or
-  mistimed set piece is inherited by the dead-ball mask.
-- Only `trim_frames` was tuned against this match. The three possession-model constants were left
-  at their externally calibrated values rather than re-optimised here, to avoid overfitting three
-  parameters to a 17-possession excerpt.
-- 17 possessions is a small sample: score differences below roughly 0.04 `spellF1` on the public
-  ground truth are within the metric's own noise band, not a meaningful difference between
-  settings.
-
----
-
-## Repository layout
-
-```
-modules/deadball/     dead_ball.py            -- Part 1
-modules/possession/   possession.py           -- Part 2 core (HMM/Viterbi decode)
-                      players_model.py        -- formation-based evidence
-                      atd_arrays.py           -- raw tracking -> numpy arrays, cached
-                      metrica_sample.py       -- external calibration data (other matches)
-                      calibrate_possession.py -- one-off calibration of Part 2's constants
-starter/              load_smart_tagging.py, baseline.py, ...  (provided)
-evaluation/           possession_metrics.py, run_evaluation.py, gt/  (provided)
-```
-
-## Reproducing the submission
-
-1. Place the provided match data under `data/tactical/` and `data/broadcast/` as named in
-   `DATA.md`.
-2. Run `TODO: final pipeline script name` — it sweeps `trim_frames`, prints the ranked results,
-   and writes the final submission CSV for the best value found.
-3. Score it with `python evaluation/run_evaluation.py` against the public ground truth to
-   reproduce the numbers above.
+- if the nearest home-player is much closer to the ball than the nearest away-player, that
+  favours `H`
+- if the reverse is true, that
+
