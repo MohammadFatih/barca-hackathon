@@ -16,21 +16,17 @@ home-or-away on the frames where that matters.
 
 ## Pipeline
 
-```
-Smart Tagging (SET PIECES)  ──▶  dead_ball.py          ──┐
-                                                           ├──▶  dead-ball mask
-Tracking (ball gaps, speed) ──▶  possession.stoppage_mask ──┘
-                                                           │
-Tracking (players, ball)    ──▶  possession.py  ◀─────────┘
-                                       │
-                                       ▼
-                              H / A / D / X per frame
-```
+The pipeline runs in three steps:
 
-Dead frames come from two independent sources, OR-ed together: the provided Smart Tagging, and a
-second signal read directly off the tracking (long stretches with no ball and players walking
-rather than playing). Live frames are handed to the possession decoder one uninterrupted stretch
-at a time.
+1. **Dead-ball mask.** Two independent signals are combined (logical OR): the provided Smart
+   Tagging, read by `dead_ball.py`, and a second signal read directly off the tracking itself
+   (`possession.stoppage_mask` — long stretches with no ball and players walking rather than
+   playing).
+2. **Possession decoding.** Everywhere the mask from step 1 says the ball is alive,
+   `possession.py` decodes home/away from the tracking (player positions and ball position),
+   one uninterrupted stretch of live play at a time.
+3. **Label assembly.** The two outputs are merged frame by frame: `D` wherever step 1 marked the
+   frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
 
 ---
 
