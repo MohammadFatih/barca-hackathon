@@ -1,0 +1,104 @@
+# Our approach
+
+## The task
+
+We address the Phase 1 possession-labeling task on the full match: one label per frame across
+199,319 frames at 25 Hz. The system must assign one of four labels:
+
+| label | meaning |
+|---|---|
+| `H` | home team in possession, ball alive |
+| `A` | away team in possession, ball alive |
+| `D` | dead ball — the ball is not in play |
+| `X` | no answer — the system declines to guess for that frame |
+
+The key modelling decision is to separate the problem into two stages:
+
+1. detect whether the ball is alive or dead
+2. if alive, decide which team has possession
+
+This split follows the structure of the task itself. Dead-ball ownership is not requested, so the
+first stage only answers the binary question “alive or dead,” and the second stage only answers
+the binary question “home or away” on the frames where the ball is live.
+
+---
+
+## Data and assets used
+
+We use the provided match bundle and the automatically generated per-frame tracking signals:
+
+- player positions and velocities
+- ball position and ball tracking confidence
+- the Smart Tagging XML for set pieces
+- homography-derived court geometry, where needed for team-space and ball-space reasoning
+
+We do not use private ground truth for the full match. The only labelled data used for model
+selection and validation is the public 5-minute excerpt published with the challenge, scored with
+the same evaluator used by the leaderboard.
+
+The implementation is therefore fully algorithmic and reproducible from the provided assets alone.
+The raw data are not redistributed in the repository.
+
+---
+
+## Part 1 — dead-ball detection
+
+### Observations
+
+The provided Smart Tagging is useful but imperfect. It marks fixed set-piece windows such as
+throw-ins, corners, goal kicks, free kicks and kick-offs. In practice, those intervals run longer
+than the true dead-ball period: the ball is often back in play well before the tagged interval
+ends.
+
+This means the Smart Tagging signal cannot be used as-is. We detect the dead-ball mask by
+combining two noisy but complementary signals:
+
+- the Smart Tagging interval itself
+- a tracking-derived stoppage signal from the motion and geometry of the ball and players
+
+### Operational rule
+
+For each set-piece interval, we keep only the first `trim_frames` frames as the dead-ball region.
+Everything after that is treated as live play. The choice of `trim_frames` is the only parameter
+that we tune directly against the public validation window.
+
+The final dead-ball mask is:
+
+- `D` if the Smart Tagging interval still covers the frame
+- or if the tracking-derived stoppage mask flags the frame
+- otherwise, live play continues
+
+The two sources are combined with a logical OR, which is intentionally conservative on the
+dead-ball side: it is safer to let a few frames remain dead than to allow a real stoppage to leak
+into possession decoding.
+
+### Tuning procedure
+
+We first selected a reasonable hand-tuned value from the public 5-minute validation window. We
+then searched over `trim_frames = 1..200` using the actual ranking metric (`spellF1`) while
+passing the dead-ball signal through the full pipeline, not by measuring dead-ball accuracy in
+isolation.
+
+This matters because the best dead-ball setting in isolation did not necessarily produce the best
+combined result once the possession decoder was introduced. The final parameter is therefore
+selected by the end-to-end pipeline, not by a proxy objective.
+
+---
+
+## Part 2 — possession decoding
+
+### Evidence used
+
+Once the dead-ball mask is fixed, the possession decoder runs only on uninterrupted live-play
+stretches. We use three pieces of evidence, each interpreted as a log-odds signal in favour of
+the home team.
+
+#### 1. Ball-based evidence
+
+We compute a relative ball-ownership signal from the geometry of the nearest tracked player to the
+ball. The idea is simple:
+
+- if the nearest home-player is much closer to the ball than the nearest away-player, that
+  favours `H`
+- if the reverse is true, that
+
