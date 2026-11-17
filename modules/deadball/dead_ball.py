@@ -1,4 +1,4 @@
-"""Detecting dead-ball situations from Smart Tagging SET PIECES intervals.
+"""Part 1: Detecting dead-ball situations from Smart Tagging SET PIECES intervals.
 
 What part 1 answers is "which frames are dead (not in active play)". 
 Approach: use only the first TRIM_FRAMES of each SET PIECES interval (Throw-in, Corner
