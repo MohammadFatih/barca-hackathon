@@ -151,7 +151,7 @@ evaluation/           possession_metrics.py, run_evaluation.py, gt/  (provided)
 
 1. Place the provided match data under `data/tactical/` and `data/broadcast/` as named in
    `DATA.md`.
-2. Run `TODO: final pipeline script name` — it sweeps `trim_frames`, prints the ranked results,
+2. Run `Final_running.py` — it sweeps `trim_frames`, prints the ranked results,
    and writes the final submission CSV for the best value found.
 3. Score it with `python evaluation/run_evaluation.py` against the public ground truth to
    reproduce the numbers above.
