@@ -45,7 +45,7 @@ interval as the true dead-ball stretch; everything after that is treated as live
 ### Choosing `trim_frames`
 
 A value of 70 frames (2.8 s) was found first by hand, against the 5-minute public ground truth.
-We then ran an automated search over `trim_frames = 1..200`, scored on the actual ranking metric
+We then ran an automated search over `trim_frames = 1 until 500`, scored on the actual ranking metric
 (`spellF1`) with the **full** pipeline — dead-ball feeding directly into possession decoding —
 rather than scoring dead-ball accuracy on its own. That distinction mattered: scored in
 isolation, a much larger `trim_frames` looked best, but that result didn't hold once real
