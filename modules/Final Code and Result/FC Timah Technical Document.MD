@@ -28,7 +28,7 @@ The pipeline runs in three steps:
 3. **Label assembly.** The two outputs are merged frame by frame: `D` wherever step 1 marked the
    frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
 
-<img src="modules/Final%20Code%20and%20Result/Technical%20Diagram.png" alt="Technical Diagram" width="600">
+![Technical Diagram](Technical%20Diagram.png)
 
 ## Part 1 — dead-ball detection
 
