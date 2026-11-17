@@ -29,40 +29,32 @@ The pipeline runs in three steps:
    frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
 
 ---
-
-graph TD
-    %% Judul Diagram
-    subgraph Title [Pipeline overview - BAR-ATH match submission]
-    end
-
-    %% Baris 1: Input Data
-    A1[Smart Tagging XML <br> (SET PIECES intervals)] --> B1[dead_ball.py <br> trim_frames = 69]
-    A2[Raw tracking <br> (player + ball positions)] --> B2[possession.stoppage_mask <br> (ball gaps + player speed)]
-    A2 --> D[possession.py — Viterbi decode <br><br> • ball evidence (nearest-player log-odds) <br> • player formation model (logistic regression) <br> • persistence (fixed switch cost)]
-
-    %% Baris 2 & 3: Kombinasi Dead-ball
-    B1 --> C[Dead-ball mask <br> = signal 1 OR signal 2]
-    B2 --> C
-
-    %% Alur ke Viterbi & Assembly
-    C -->|restarts decode at every dead-ball boundary| D
-    C -.->|skips dead frames| E[Label assembly <br> D where dead-ball mask is True; <br> otherwise H / A from the decode]
-    D --> E
-
-    %% Output Akhir
-    E --> F[Final submission CSV <br> (H / A / D / X per frame)]
-    F --> G[Scored by evaluation/run_evaluation.py <br> macroF1 = 0.7766   spellF1 = 0.4828   (trim_frames = 69)]
-
-    %% Styling Warna ala Gambar
-    style F fill:#243b55,stroke:#1d2d44,stroke-width:2px,color:#fff
-    style G fill:#d8f3dc,stroke:#52b788,stroke-width:2px,color:#000
-    style C fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style E fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style D fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style B1 fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style B2 fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style A1 fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
-    style A2 fill:#e9ecef,stroke:#adb5bd,stroke-width:1px
+[ Smart Tagging XML ]        [ Raw Tracking ]
+         │                          │
+         ▼                          ▼
+┌────────────────────────┐ ┌────────────────────────┐
+│ Part 1: Dead-Ball      │ │ Part 2: Possession     │
+│ Detection (Trim 1-500) │ │ Decoding (Viterbi)     │
+└───────────┬────────────┘ └───────────┬────────────┘
+            │                          │
+            └───────────┬──────────────┘
+                        │
+                        ▼
+             [ Label Assembly ]
+                        │
+                        ▼
+             [ Evaluasi SpellF1 ]
+              (Ground Truth Publik)
+                        │
+       ┌────────────────┴────────────────┐
+       │ (Ulangi untuk nilai 1 s.d. 500) │
+       └────────────────┬────────────────┘
+                        │
+                        ▼
+         [ Pilih Nilai Terbaik: 69 ]
+                        │
+                        ▼
+         [ Final Submission CSV ]
 
 
 ## Part 1 — dead-ball detection
