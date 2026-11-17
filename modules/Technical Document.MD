@@ -55,7 +55,7 @@ around the coarse peak.
 
 | Submission | `trim_frames` | macroF1 | spellF1 (ranking metric) |
 |---|---|---|---|
-| Hand-tuned guess (manual, pre-pipeline) | 70 | n/a | 0.4471 (reported) |
+| Hand-tuned guess (manual, pre-pipeline) | 70 | n/a | 0.4471 |
 | Automated two-phase grid search (this submission) | 69 | 0.7766 | 0.4828 |
 
 The automated search converged on `trim_frames = 69` — within one frame of the original
