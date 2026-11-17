@@ -28,7 +28,7 @@ The pipeline runs in three steps:
 3. **Label assembly.** The two outputs are merged frame by frame: `D` wherever step 1 marked the
    frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
 
----
+'''
 [ Smart Tagging XML ]        [ Raw Tracking ]
          │                          │
          ▼                          ▼
@@ -55,7 +55,7 @@ The pipeline runs in three steps:
                         │
                         ▼
          [ Final Submission CSV ]
-
+'''
 
 ## Part 1 — dead-ball detection
 
