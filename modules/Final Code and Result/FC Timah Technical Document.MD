@@ -68,7 +68,6 @@ The pipeline runs in three steps:
                 | Final Submission CSV  |
                 |  (H / A / D / X)      |
                 +-----------------------+
-
 ## Part 1 — dead-ball detection
 
 ### Method
