@@ -30,6 +30,8 @@ The pipeline runs in three steps:
 
 ![Technical Diagram](Technical%20Diagram.png)
 
+Pipeline Architecture Diagram
+
 ## Part 1 — dead-ball detection
 
 ### Method
