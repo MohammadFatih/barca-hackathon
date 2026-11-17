@@ -35,7 +35,7 @@ The pipeline runs in three steps:
 ### Method
 
 The Smart Tagging XML tags five set-piece types (Throw-in, Corner Kick, Goal Kick, Free Kick,
-Kick Off) as intervals. Checked against the public ground truth, the tagged interval runs well
+and Kick Off) as intervals. Checked against the public ground truth, the tagged interval runs well
 past the moment the ball is actually back in play — a throw-in is live again almost as soon as it
 lands, long before the tag ends. We keep only the first `trim_frames` frames of each tagged
 interval as the true dead-ball stretch; everything after that is treated as live.
