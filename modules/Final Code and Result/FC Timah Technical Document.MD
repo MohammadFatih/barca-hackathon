@@ -28,34 +28,46 @@ The pipeline runs in three steps:
 3. **Label assembly.** The two outputs are merged frame by frame: `D` wherever step 1 marked the
    frame dead, otherwise `H` or `A` from step 2's decode (or `X` where neither has a call).
 
-'''
-[ Smart Tagging XML ]        [ Raw Tracking ]
-         │                          │
-         ▼                          ▼
-┌────────────────────────┐ ┌────────────────────────┐
-│ Part 1: Dead-Ball      │ │ Part 2: Possession     │
-│ Detection (Trim 1-500) │ │ Decoding (Viterbi)     │
-└───────────┬────────────┘ └───────────┬────────────┘
-            │                          │
-            └───────────┬──────────────┘
-                        │
-                        ▼
-             [ Label Assembly ]
-                        │
-                        ▼
-             [ Evaluasi SpellF1 ]
-              (Ground Truth Publik)
-                        │
-       ┌────────────────┴────────────────┐
-       │ (Ulangi untuk nilai 1 s.d. 500) │
-       └────────────────┬────────────────┘
-                        │
-                        ▼
-         [ Pilih Nilai Terbaik: 69 ]
-                        │
-                        ▼
-         [ Final Submission CSV ]
-'''
++-----------------------+       +-----------------------+
+|  Smart Tagging XML    |       |     Raw Tracking      |
+|  (SET PIECES intervals)       | (Player & Ball Pos)   |
++-----------+-----------+       +-----------+-----------+
+            |                               |
+            v                               v
++-----------------------+       +-----------------------+
+| Part 1: Dead-Ball     |       | Part 2: Possession    |
+| Detection (Trim 1-500)|       | Decoding (Viterbi)    |
++-----------+-----------+       +-----------+-----------+
+            |                               |
+            +---------------+---------------+
+                            |
+                            v
+                +-----------------------+
+                |    Label Assembly     |
+                | (Gabung Dead & Live)  |
+                +-----------+-----------+
+                            |
+                            v
+                +-----------------------+
+                |   Evaluasi SpellF1    |
+                | (vs Ground Truth 5m)  |
+                +-----------+-----------+
+                            |
+           +----------------+----------------+
+           | (Ulangi uji coba nilai 1 s.d. 500) |
+           +----------------+----------------+
+                            |
+                            v
+                +-----------------------+
+                | Pilih Nilai Terbaik:  |
+                |    trim_frames = 69   |
+                +-----------+-----------+
+                            |
+                            v
+                +-----------------------+
+                | Final Submission CSV  |
+                |  (H / A / D / X)      |
+                +-----------------------+
 
 ## Part 1 — dead-ball detection
 
